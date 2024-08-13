@@ -101,6 +101,8 @@ class FabricRunItemOperator(BaseOperator):
         wait_for_termination: bool = True,
         timeout: int = 60 * 60 * 24 * 7,
         check_interval: int = 60,
+        max_retries: int = 5,
+        retry_delay: int = 1,
         deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         job_params: dict = None,
         **kwargs,
@@ -113,6 +115,8 @@ class FabricRunItemOperator(BaseOperator):
         self.wait_for_termination = wait_for_termination
         self.timeout = timeout
         self.check_interval = check_interval
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         self.deferrable = deferrable
         self.job_params = job_params
 
@@ -126,23 +130,32 @@ class FabricRunItemOperator(BaseOperator):
             workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params
         )
 
-        max_retries = 5
-        retry_delay = 1
         attempt = 0
         self.location = None
 
-        while attempt < max_retries and self.location is None:
+        while attempt < self.max_retries and self.location is None:
             attempt += 1
             self.location = response.headers.get("Location")
 
             if self.location is None:
-                self.log.info(f"Attempt {attempt} - 'Location' header not found. Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
+                self.log.info(f"Attempt {attempt} - 'Location' header not found. Retrying in {self.retry_delay} seconds...")
+                time.sleep(self.retry_delay)
 
         if self.location is None:
             raise FabricRunItemException("Item run location not found in response headers.")
 
-        item_run_details = self.hook.get_item_run_details(self.location)
+        attempt = 0
+        item_run_details = None
+
+        while attempt < self.max_retries and item_run_details is None:
+            item_run_details_response = self.hook.get_item_run_details(self.location)
+
+            if item_run_details_response.get("failureReason", {}).get("errorCode") == "RequestExecutionFailed":
+                self.log.info(f"Item run details not available yet. Retrying in {self.retry_delay} seconds...")
+                time.sleep(self.retry_delay)
+            else:
+                item_run_details = item_run_details_response
+
         logging.info(f"First item run details: {item_run_details}")
 
         self.item_run_status = item_run_details["status"]
