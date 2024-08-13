@@ -143,6 +143,7 @@ class FabricRunItemOperator(BaseOperator):
             raise FabricRunItemException("Item run location not found in response headers.")
 
         item_run_details = self.hook.get_item_run_details(self.location)
+        logging.info(f"First item run details: {item_run_details}")
 
         self.item_run_status = item_run_details["status"]
         self.item_run_id = item_run_details["id"]
@@ -170,6 +171,7 @@ class FabricRunItemOperator(BaseOperator):
             else:
                 end_time = time.monotonic() + self.timeout
                 item_run_details = self.hook.get_item_run_details(self.location)
+                logging.info(f"Second item run details: {item_run_details}")
                 self.item_run_status = item_run_details["status"]
 
                 if self.item_run_status not in FabricRunItemStatus.TERMINAL_STATUSES:
@@ -197,6 +199,7 @@ class FabricRunItemOperator(BaseOperator):
 
             # Update the status of Item run in Xcom
             item_run_details = self.hook.get_item_run_details(self.location)
+            logging.info(f"Third item run details: {item_run_details}")
             self.item_run_status = item_run_details["status"]
             context["ti"].xcom_push(key="run_status", value=self.item_run_status)
         else:
