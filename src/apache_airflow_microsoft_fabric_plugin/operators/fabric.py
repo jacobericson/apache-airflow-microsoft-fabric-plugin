@@ -84,6 +84,7 @@ class FabricRunItemOperator(BaseOperator):
         "item_id",
         "job_type",
         "fabric_conn_id",
+        "job_params",
     )
     template_fields_renderers = {"parameters": "json"}
 
@@ -101,6 +102,7 @@ class FabricRunItemOperator(BaseOperator):
         timeout: int = 60 * 60 * 24 * 7,
         check_interval: int = 60,
         deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
+        job_params: dict = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -112,6 +114,7 @@ class FabricRunItemOperator(BaseOperator):
         self.timeout = timeout
         self.check_interval = check_interval
         self.deferrable = deferrable
+        self.job_params = job_params
 
     @cached_property
     def hook(self) -> FabricHook:
@@ -120,9 +123,24 @@ class FabricRunItemOperator(BaseOperator):
 
     def execute(self, context: Context) -> None:
         response = self.hook.run_fabric_item(
-            workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type
+            workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params
         )
-        self.location = response.headers["Location"]
+
+        max_retries = 5
+        retry_delay = 1
+        attempt = 0
+        self.location = None
+
+        while attempt < max_retries and self.location is None:
+            attempt += 1
+            self.location = response.headers.get("Location")
+
+            if self.location is None:
+                self.log.info(f"Attempt {attempt} - 'Location' header not found. Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+
+        if self.location is None:
+            raise FabricRunItemException("Item run location not found in response headers.")
 
         item_run_details = self.hook.get_item_run_details(self.location)
 
