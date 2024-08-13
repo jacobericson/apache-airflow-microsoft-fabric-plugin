@@ -203,7 +203,7 @@ class FabricHook(BaseHook):
 
         headers = self.get_headers()
 
-        data = {"executionData": job_params} if job_params else {}
+        data = {"executionData": {"parameters": job_params}} if job_params else {}
 
         response = self._send_request("POST", url, headers=headers, json=data)
 
