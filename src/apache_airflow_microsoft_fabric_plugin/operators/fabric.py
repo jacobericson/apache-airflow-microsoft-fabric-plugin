@@ -129,20 +129,7 @@ class FabricRunItemOperator(BaseOperator):
         response = self.hook.run_fabric_item(
             workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params
         )
-
-        attempt = 0
-        self.location = None
-
-        while attempt < self.max_retries and self.location is None:
-            attempt += 1
-            self.location = response.headers.get("Location")
-
-            if self.location is None:
-                self.log.info(f"Attempt {attempt} - 'Location' header not found. Retrying in {self.retry_delay} seconds...")
-                time.sleep(self.retry_delay)
-
-        if self.location is None:
-            raise FabricRunItemException("Item run location not found in response headers.")
+        self.location = response.headers["Location"]
 
         attempt = 0
         item_run_details = None
