@@ -137,7 +137,7 @@ class FabricRunItemOperator(BaseOperator):
             item_run_details_response = self.hook.get_item_run_details(self.location)
             self.log.info(f"Item run details response: {item_run_details_response}")
 
-            if item_run_details_response.get("failureReason", dict()) is not None and item_run_details_response.get("failureReason", dict()).get("errorCode") == "RequestExecutionFailed":
+            if item_run_details_response.get("failureReason", dict()) is not None and item_run_details_response.get("failureReason", dict()).get("errorCode") in ["RequestExecutionFailed", "NotFound"]:
                 self.log.info(f"Item run details not available yet. Retrying in {self.retry_delay} seconds...")
                 time.sleep(self.retry_delay)
             else:
