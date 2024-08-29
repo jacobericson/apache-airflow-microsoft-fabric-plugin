@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "apache_airflow_microsoft_fabric_plugin"
-version = "1.0.2"
+name = "apache_airflow_microsoft_fabric_plugin_cs"
+version = "1.0.16"
 authors = [
   { name="Ambika Garg", email="ambikagarg1101@gmail.com" },
 ]
@@ -20,4 +20,4 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ambika-garg/apache-airflow-microsoft-fabric-plugin.git"
+Homepage = "https://github.com/jacobericson/apache-airflow-microsoft-fabric-plugin.git"
