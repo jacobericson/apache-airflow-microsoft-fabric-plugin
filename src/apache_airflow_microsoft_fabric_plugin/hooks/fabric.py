@@ -10,6 +10,7 @@ from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
 from airflow.models import Connection
 from airflow.utils.db import provide_session
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 FABRIC_SCOPES = "https://api.fabric.microsoft.com/Item.Execute.All https://api.fabric.microsoft.com/Item.ReadWrite.All offline_access openid profile"
 
@@ -164,7 +165,7 @@ class FabricHook(BaseHook):
 
         :param location: The location of the item instance.
         """
-    
+
         headers = self.get_headers()
         response = self._send_request("GET", location, headers=headers)
 
