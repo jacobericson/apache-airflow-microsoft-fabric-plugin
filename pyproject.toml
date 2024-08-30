@@ -18,6 +18,9 @@ classifiers = [
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Python Modules"
 ]
+dependencies = [
+    "tenacity>=9.0.0"
+]
 
 [project.urls]
 Homepage = "https://github.com/jacobericson/apache-airflow-microsoft-fabric-plugin.git"
