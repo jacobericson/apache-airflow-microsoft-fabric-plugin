@@ -129,13 +129,16 @@ class FabricRunItemOperator(BaseOperator):
         )
         self.location = response.headers["Location"]
         item_run_details = self.hook.get_item_run_details(self.location)
-                
-        self.item_run_status = item_run_details["status"]
-        self.item_run_id = item_run_details["id"]
+
+        if item_run_details:
+            self.item_run_status = item_run_details.get("status")  # Use .get to avoid potential KeyErrors
+            self.item_run_id = item_run_details.get("id")
+        else:
+            raise FabricRunItemException("Failed to retrieve item run details.")
 
         # Push the run id to XCom regardless of what happen during execution
         context["ti"].xcom_push(key="run_id", value=self.item_run_id)
-        context["ti"].xcom_push(key="location", value=self.location)         
+        context["ti"].xcom_push(key="location", value=self.location)
 
         if self.wait_for_termination:
             if self.deferrable is False:

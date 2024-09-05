@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apache_airflow_microsoft_fabric_plugin_cs"
-version = "1.0.19"
+version = "1.0.20"
 authors = [
   { name="Ambika Garg", email="ambikagarg1101@gmail.com" },
 ]
