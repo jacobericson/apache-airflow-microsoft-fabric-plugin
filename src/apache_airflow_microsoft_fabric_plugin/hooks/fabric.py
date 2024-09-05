@@ -169,6 +169,7 @@ class FabricHook(BaseHook):
         headers = self.get_headers()
         response = self._send_request("GET", location, headers=headers)
 
+        self.log.info(f"Response: {response}")
         if response.ok:
             item_run_details = response.json()
             item_failure_reason = item_run_details.get("failureReason", dict())
