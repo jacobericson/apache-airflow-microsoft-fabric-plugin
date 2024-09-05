@@ -82,6 +82,7 @@ class FabricRunItemOperator(BaseOperator):
         "job_type",
         "fabric_conn_id",
         "job_params",
+        "config",
     )
     template_fields_renderers = {"parameters": "json"}
 
@@ -102,6 +103,7 @@ class FabricRunItemOperator(BaseOperator):
         retry_delay: int = 1,
         deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         job_params: dict = None,
+        config: dict = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -116,6 +118,7 @@ class FabricRunItemOperator(BaseOperator):
         self.retry_delay = retry_delay
         self.deferrable = deferrable
         self.job_params = job_params
+        self.config = config
 
     @cached_property
     def hook(self) -> FabricHook:
@@ -125,7 +128,7 @@ class FabricRunItemOperator(BaseOperator):
     def execute(self, context: Context) -> None:
         # Execute the item run
         response = self.hook.run_fabric_item(
-            workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params
+            workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params, config=self.config
         )
         self.location = response.headers["Location"]
         item_run_details = self.hook.get_item_run_details(self.location)
