@@ -158,7 +158,10 @@ class FabricHook(BaseHook):
             "Authorization": f"Bearer {self._get_token()}",
         }
 
-    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, max=10))
+    @retry(
+        stop=lambda self: stop_after_attempt(self.max_retries),
+        wait=lambda self: wait_exponential(multiplier=self.retry_delay, max=10)
+    )
     def get_item_run_details(self, location: str) -> None:
         """
         Get details of the item run instance.
