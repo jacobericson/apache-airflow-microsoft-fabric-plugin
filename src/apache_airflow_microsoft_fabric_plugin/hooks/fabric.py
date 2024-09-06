@@ -158,10 +158,6 @@ class FabricHook(BaseHook):
             "Authorization": f"Bearer {self._get_token()}",
         }
 
-    @retry(
-        stop=lambda self: stop_after_attempt(self.max_retries),
-        wait=lambda self: wait_exponential(multiplier=self.retry_delay, max=10)
-    )
     def get_item_run_details(self, location: str) -> None:
         """
         Get details of the item run instance.
@@ -169,19 +165,24 @@ class FabricHook(BaseHook):
         :param location: The location of the item instance.
         """
 
-        headers = self.get_headers()
-        response = self._send_request("GET", location, headers=headers)
+        # Define the retry configuration dynamically based on instance attributes
+        @retry(
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_exponential(multiplier=self.retry_delay, max=10)
+        )
+        def _internal_get_item_run_details():
+            headers = self.get_headers()
+            response = self._send_request("GET", location, headers=headers)
 
-        self.log.info(f"Response: {response}")
-        if response.ok:
-            item_run_details = response.json()
-            item_failure_reason = item_run_details.get("failureReason", dict())
-            self.log.info(f"Item run details: {item_run_details}")
-            if item_failure_reason is not None and item_failure_reason.get("errorCode") in ["RequestExecutionFailed", "NotFound"]:
-                self.log.info(f"Item run details not available yet. Retrying in {self.retry_delay} seconds...")
-                raise FabricRunItemException("Unable to get item run details.")
-            return item_run_details
-        response.raise_for_status()
+            if response.ok:
+                item_run_details = response.json()
+                item_failure_reason = item_run_details.get("failureReason", dict())
+                if item_failure_reason is not None and item_failure_reason.get("errorCode") in ["RequestExecutionFailed", "NotFound"]:
+                    raise FabricRunItemException("Unable to get item run details.")
+                return item_run_details
+            response.raise_for_status()
+
+        return _internal_get_item_run_details()
 
     def get_item_details(self, workspace_id: str, item_id: str) -> dict:
         """
