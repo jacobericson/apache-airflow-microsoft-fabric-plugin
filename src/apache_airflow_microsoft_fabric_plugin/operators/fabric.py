@@ -126,7 +126,7 @@ class FabricRunItemOperator(BaseOperator):
 
     def execute(self, context: Context) -> None:
         # Execute the item run
-        response = self.hook.run_fabric_item(
+        self.location = self.hook.run_fabric_item(
             workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params, config=self.config
         )
         item_run_details = self.hook.get_item_run_details(self.location)
