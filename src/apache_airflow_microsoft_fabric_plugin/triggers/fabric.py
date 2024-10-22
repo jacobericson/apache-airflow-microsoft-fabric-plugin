@@ -93,6 +93,7 @@ class FabricTrigger(BaseTrigger):
                     "status": "error",
                     "message": f"Timeout reached: The item run {self.item_run_id} has {item_run_status}.",
                     "run_id": self.item_run_id,
+                    "item_run_status": item_run_status,
                 }
             )
         except Exception as error:

@@ -81,6 +81,7 @@ class FabricRunItemOperator(BaseOperator):
         "job_type",
         "fabric_conn_id",
         "job_params",
+        "config",
     )
     template_fields_renderers = {"parameters": "json"}
 
@@ -101,6 +102,7 @@ class FabricRunItemOperator(BaseOperator):
         retry_delay: int = 1,
         deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         job_params: dict = None,
+        config: dict = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -115,6 +117,7 @@ class FabricRunItemOperator(BaseOperator):
         self.retry_delay = retry_delay
         self.deferrable = deferrable
         self.job_params = job_params
+        self.config = config
 
     @cached_property
     def hook(self) -> FabricHook:
@@ -123,13 +126,16 @@ class FabricRunItemOperator(BaseOperator):
 
     def execute(self, context: Context) -> None:
         # Execute the item run
-        self.location = self.hook.run_fabric_item(
-            workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params
+        response = self.hook.run_fabric_item(
+            workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params, config=self.config
         )
         item_run_details = self.hook.get_item_run_details(self.location)
 
-        self.item_run_status = item_run_details["status"]
-        self.item_run_id = item_run_details["id"]
+        if item_run_details:
+            self.item_run_status = item_run_details.get("status")  # Use .get to avoid potential KeyErrors
+            self.item_run_id = item_run_details.get("id")
+        else:
+            raise FabricRunItemException("Failed to retrieve item run details.")
 
         # Push the run id to XCom regardless of what happen during execution
         context["ti"].xcom_push(key="run_id", value=self.item_run_id)

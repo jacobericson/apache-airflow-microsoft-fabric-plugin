@@ -208,7 +208,8 @@ class FabricHook(BaseHook):
 
         raise AirflowException(f"Failed to get item details for item {item_id} in workspace {workspace_id}.")
 
-    def run_fabric_item(self, workspace_id: str, item_id: str, job_type: str, job_params: dict | None) -> str:
+
+    def run_fabric_item(self, workspace_id: str, item_id: str, job_type: str, job_params: dict = None, config: dict = None) -> str:
         """
         Run a Fabric item.
 
@@ -223,7 +224,12 @@ class FabricHook(BaseHook):
 
         headers = self.get_headers()
 
-        data = {"executionData": {"parameters": job_params}} if job_params else {}
+        data = {}
+        if job_params or config:
+            data["executionData"] = {
+                "parameters": job_params or {},
+                "configuration": config or {},
+        }
 
         response = self._send_request("POST", url, headers=headers, json=data)
         response.raise_for_status()
