@@ -22,7 +22,6 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Sequence
 
 from airflow.configuration import conf
-from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator, BaseOperatorLink, XCom
 from apache_airflow_microsoft_fabric_plugin.hooks.fabric import (
     FabricHook,
@@ -130,7 +129,6 @@ class FabricRunItemOperator(BaseOperator):
         response = self.hook.run_fabric_item(
             workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params, config=self.config
         )
-        self.location = response.headers["Location"]
         item_run_details = self.hook.get_item_run_details(self.location)
 
         if item_run_details:
@@ -208,4 +206,4 @@ class FabricRunItemOperator(BaseOperator):
             self.log.info(event["message"])
             context["ti"].xcom_push(key="run_status", value=event["item_run_status"])
             if event["status"] == "error":
-                raise AirflowException(event["message"])
+                raise FabricRunItemException(str(event["message"]))

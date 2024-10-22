@@ -6,11 +6,12 @@ from typing import Any, Callable
 import aiohttp
 import requests
 from asgiref.sync import sync_to_async
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
 from airflow.models import Connection
-from airflow.utils.db import provide_session
-from tenacity import retry, stop_after_attempt, wait_exponential
+from airflow.utils.session import provide_session
 
 FABRIC_SCOPES = "https://api.fabric.microsoft.com/Item.Execute.All https://api.fabric.microsoft.com/Item.ReadWrite.All offline_access openid profile"
 
@@ -84,7 +85,7 @@ class FabricHook(BaseHook):
         *,
         fabric_conn_id: str = default_conn_name,
         max_retries: int = 5,
-        retry_delay: int = 1,
+        retry_delay: int = 1
     ):
         self.conn_id = fabric_conn_id
         self._api_version = "v1"
@@ -137,16 +138,22 @@ class FabricHook(BaseHook):
             msg = f"Response: {e.response.content.decode()} Status Code: {e.response.status_code}"
             raise AirflowException(msg)
 
-        access_token = response.json().get("access_token")
-        refresh_token = response.json().get("refresh_token")
-        update_conn(self.conn_id, refresh_token)
+        response_data = response.json()
+
+        api_access_token: str | None = response_data.get("access_token")
+        api_refresh_token: str | None = response_data.get("refresh_token")
+
+        if not api_access_token or not api_refresh_token:
+            raise AirflowException("Failed to obtain access or refresh token from API.")
+
+        update_conn(self.conn_id, api_refresh_token)
 
         self.cached_access_token = {
-            "access_token": access_token,
-            "expiry_time": time.time() + response.json().get("expires_in"),
+            "access_token": api_access_token,
+            "expiry_time": time.time() + response_data.get("expires_in"),
         }
 
-        return access_token
+        return api_access_token
 
     def get_headers(self) -> dict[str, str]:
         """
@@ -165,23 +172,20 @@ class FabricHook(BaseHook):
         :param location: The location of the item instance.
         """
 
-        # Define the retry configuration dynamically based on instance attributes
         @retry(
             stop=stop_after_attempt(self.max_retries),
-            wait=wait_exponential(multiplier=self.retry_delay, max=10)
+            wait=wait_exponential(multiplier=self.retry_delay / 2, max=10)
         )
         def _internal_get_item_run_details():
             headers = self.get_headers()
             response = self._send_request("GET", location, headers=headers)
-
-            self.log.info("Response:", response.text)
-            if response.ok:
-                item_run_details = response.json()
-                item_failure_reason = item_run_details.get("failureReason", dict())
-                if item_failure_reason is not None and item_failure_reason.get("errorCode") in ["RequestExecutionFailed", "NotFound"]:
-                    raise FabricRunItemException("Unable to get item run details.")
-                return item_run_details
             response.raise_for_status()
+
+            item_run_details = response.json()
+            item_failure_reason = item_run_details.get("failureReason", dict())
+            if item_failure_reason is not None and item_failure_reason.get("errorCode") in ["RequestExecutionFailed", "NotFound"]:
+                raise FabricRunItemException("Unable to get item run details.")
+            return item_run_details
 
         return _internal_get_item_run_details()
 
@@ -203,6 +207,7 @@ class FabricHook(BaseHook):
             return response.json()
 
         raise AirflowException(f"Failed to get item details for item {item_id} in workspace {workspace_id}.")
+
 
     def run_fabric_item(self, workspace_id: str, item_id: str, job_type: str, job_params: dict = None, config: dict = None) -> str:
         """
@@ -227,10 +232,13 @@ class FabricHook(BaseHook):
         }
 
         response = self._send_request("POST", url, headers=headers, json=data)
-
-        if response.ok:
-            return response
         response.raise_for_status()
+
+        location_header = response.headers.get("Location")
+        if location_header is None:
+            raise AirflowException("Location header not found in run on demand item response.")
+
+        return location_header
 
     # TODO: output value from notebook should be available in xcom - not available in API yet
 
@@ -297,7 +305,7 @@ class FabricAsyncHook(FabricHook):
     def __init__(self, *, fabric_conn_id: str = default_conn_name):
         super().__init__(fabric_conn_id=fabric_conn_id)
 
-    async def _send_request(self, request_type: str, url: str, **kwargs) -> Any:
+    async def _async_send_request(self, request_type: str, url: str, **kwargs) -> Any:
         """
         Asynchronously sends a HTTP request and returns the response.
 
@@ -314,24 +322,31 @@ class FabricAsyncHook(FabricHook):
             else:
                 raise AirflowException(f"Unsupported request type: {request_type}")
 
-            response = await request_func(url, **kwargs)
             try:
-                response.raise_for_status()
-                return await response.json()
-            except aiohttp.ClientResponseError as e:
-                raise AirflowException("Request to %s failed with error %s", url, e)
+                response = await request_func(url, **kwargs)
 
-    async def _get_token(self) -> str:
+                content_type = response.headers.get('Content-Type', '').lower()
+                if 'application/json' in content_type:
+                    return await response.json()
+                elif 'application/octet-stream' in content_type:
+                    return response # Returns the raw bytes
+                else:
+                    raise AirflowException(f"Unsupported Content-Type: {content_type}")
+
+            except aiohttp.ClientResponseError as e:
+                raise AirflowException("Request to %s failed with error %s", (url, str(e)))
+
+    async def _async_get_token(self) -> str:
         """
         Get the access token from the refresh token.
 
         :return: The access token.
         """
-        access_token = self.cached_access_token.get("access_token")
+        cached_token = self.cached_access_token.get("access_token")
         expiry_time = self.cached_access_token.get("expiry_time")
 
-        if access_token and expiry_time > time.time():
-            return str(access_token)
+        if isinstance(cached_token, str) and isinstance(expiry_time, float) and expiry_time > time.time():
+            return str(cached_token)
 
         connection = await sync_to_async(self.get_connection)(self.conn_id)
         tenant_id = connection.extra_dejson.get("tenantId")
@@ -349,44 +364,47 @@ class FabricAsyncHook(FabricHook):
         if client_secret:
             data["client_secret"] = client_secret
 
-        response = await self._send_request(
+        response = await self._async_send_request(
             "POST",
             f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
             data=data,
         )
-        access_token = response.get("access_token")
-        refresh_token = response.get("refresh_token")
+        api_access_token: str | None = response.get("access_token")
+        api_refresh_token: str | None = response.get("refresh_token")
 
-        await sync_to_async(update_conn)(self.conn_id, refresh_token)
+        if not api_access_token or not api_refresh_token:
+            raise AirflowException("Failed to obtain access or refresh token from API.")
+
+        await sync_to_async(update_conn)(self.conn_id, api_refresh_token)
 
         self.cached_access_token = {
-            "access_token": access_token,
+            "access_token": api_access_token,
             "expiry_time": time.time() + response.get("expires_in"),
         }
 
-        return access_token
+        return api_access_token
 
-    async def get_headers(self) -> dict[str, str]:
+    async def async_get_headers(self) -> dict[str, str]:
         """
         Form of auth headers based on OAuth token.
 
         :return: dict: Headers with the authorization token.
         """
-        access_token = await self._get_token()
+        access_token = await self._async_get_token()
 
         return {
             "Authorization": f"Bearer {access_token}",
         }
 
-    async def get_item_run_details(self, workspace_id: str, item_id: str, item_run_id: str) -> None:
+    async def async_get_item_run_details(self, workspace_id: str, item_id: str, item_run_id: str) -> None:
         """
         Get run details of the item instance.
 
         :param location: The location of the item instance.
         """
         url = f"{self._base_url}/{self._api_version}/workspaces/{workspace_id}/items/{item_id}/jobs/instances/{item_run_id}"
-        headers = await self.get_headers()
-        response = await self._send_request("GET", url, headers=headers)
+        headers = await self.async_get_headers()
+        response = await self._async_send_request("GET", url, headers=headers)
 
         return response
 
@@ -400,7 +418,8 @@ class FabricAsyncHook(FabricHook):
 
         """
         url = f"{self._base_url}/{self._api_version}/workspaces/{workspace_id}/items/{item_id}/jobs/instances/{item_run_id}/cancel"
-        headers = await self.get_headers()
-        response = await self._send_request("POST", url, headers=headers)
+        headers = await self.async_get_headers()
+        response = await self._async_send_request("POST", url, headers=headers)
+        response.raise_for_status()
 
         return response
