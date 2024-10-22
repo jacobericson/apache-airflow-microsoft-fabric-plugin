@@ -98,8 +98,8 @@ class FabricRunItemOperator(BaseOperator):
         wait_for_termination: bool = True,
         timeout: int = 60 * 60 * 24 * 7,
         check_interval: int = 60,
-        max_retries: int = 5,
-        retry_delay: int = 1,
+        max_api_retries: int = 5,
+        api_retry_delay: int = 1,
         deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         job_params: dict = None,
         config: dict = None,
@@ -113,8 +113,8 @@ class FabricRunItemOperator(BaseOperator):
         self.wait_for_termination = wait_for_termination
         self.timeout = timeout
         self.check_interval = check_interval
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
+        self.max_api_retries = max_api_retries
+        self.api_retry_delay = api_retry_delay
         self.deferrable = deferrable
         self.job_params = job_params
         self.config = config
@@ -122,7 +122,7 @@ class FabricRunItemOperator(BaseOperator):
     @cached_property
     def hook(self) -> FabricHook:
         """Create and return the FabricHook (cached)."""
-        return FabricHook(fabric_conn_id=self.fabric_conn_id, max_retries=self.max_retries, retry_delay=self.retry_delay)
+        return FabricHook(fabric_conn_id=self.fabric_conn_id, max_api_retries=self.max_api_retries, api_retry_delay=self.api_retry_delay)
 
     def execute(self, context: Context) -> None:
         # Execute the item run

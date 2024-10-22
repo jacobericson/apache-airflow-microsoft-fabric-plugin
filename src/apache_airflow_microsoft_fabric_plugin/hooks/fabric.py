@@ -84,14 +84,14 @@ class FabricHook(BaseHook):
         self,
         *,
         fabric_conn_id: str = default_conn_name,
-        max_retries: int = 5,
-        retry_delay: int = 1
+        max_api_retries: int = 5,
+        api_retry_delay: int = 1
     ):
         self.conn_id = fabric_conn_id
         self._api_version = "v1"
         self._base_url = "https://api.fabric.microsoft.com"
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
+        self.max_api_retries = max_api_retries
+        self.api_retry_delay = api_retry_delay
         self.cached_access_token: dict[str, str | None | int] = {"access_token": None, "expiry_time": 0}
         super().__init__()
 
@@ -173,8 +173,8 @@ class FabricHook(BaseHook):
         """
 
         @retry(
-            stop=stop_after_attempt(self.max_retries),
-            wait=wait_exponential(multiplier=1, min=self.retry_delay, max=10)
+            stop=stop_after_attempt(self.max_api_retries),
+            wait=wait_exponential(multiplier=1, min=self.api_retry_delay, max=10)
         )
         def _internal_get_item_run_details():
             headers = self.get_headers()
