@@ -6,7 +6,8 @@ from typing import Any, Callable
 import aiohttp
 import requests
 from asgiref.sync import sync_to_async
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+from requests.exceptions import HTTPError
 
 from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
@@ -172,9 +173,18 @@ class FabricHook(BaseHook):
         :param location: The location of the item instance.
         """
 
+        def wait_retry(retry_state):
+            exception = retry_state.outcome.exception()
+            if isinstance(exception, HTTPError) and exception.response.status_code == 429:
+                retry_after = exception.response.headers.get('Retry-After')
+                if retry_after is not None:
+                    return int(retry_after)
+            # Use exponential backoff by default
+            return wait_exponential(multiplier=1, min=self.api_retry_delay, max=10)(retry_state)
+
         @retry(
             stop=stop_after_attempt(self.max_api_retries),
-            wait=wait_exponential(multiplier=1, min=self.api_retry_delay, max=10)
+            wait=wait_retry
         )
         def _internal_get_item_run_details():
             headers = self.get_headers()
