@@ -87,7 +87,6 @@ class FabricRunItemOperator(BaseOperator):
 
     operator_extra_links = (FabricRunItemLink(),)
 
-    @apply_defaults
     def __init__(
         self,
         *,
