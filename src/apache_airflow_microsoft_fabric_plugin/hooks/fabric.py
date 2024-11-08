@@ -58,29 +58,6 @@ class FabricHook(BaseHook):
     default_conn_name: str = "fabric_default"
     hook_name: str = "MS Fabric"
 
-    @classmethod
-    def get_connection_form_widgets(cls) -> dict[str, Any]:
-        """Return connection widgets to add to connection form."""
-        from flask_appbuilder.fieldwidgets import BS3TextFieldWidget
-        from flask_babel import lazy_gettext
-        from wtforms import StringField
-
-        return {
-            "tenantId": StringField(lazy_gettext("Tenant ID"), widget=BS3TextFieldWidget()),
-            "clientId": StringField(lazy_gettext("Client ID"), widget=BS3TextFieldWidget()),
-        }
-
-    @classmethod
-    def get_ui_field_behaviour(cls) -> dict[str, Any]:
-        """Return custom field behaviour."""
-        return {
-            "hidden_fields": ["schema", "port", "host", "extra"],
-            "relabeling": {
-                "login": "Client ID",
-                "password": "Refresh Token",
-            },
-        }
-
     def __init__(
         self,
         *,
@@ -105,12 +82,16 @@ class FabricHook(BaseHook):
 
         :return: The access token.
         """
+        self.log.info("Retrieving OAuth token for connection ID: %s", self.conn_id)
+
         access_token = self.cached_access_token.get("access_token")
         expiry_time = self.cached_access_token.get("expiry_time")
 
         if access_token and expiry_time > time.time():
+            self.log.debug("Using cached access token.")
             return str(access_token)
 
+        self.log.info("Access token expired or not found. Requesting new token.")
         connection = self.get_connection(self.conn_id)
         tenant_id = connection.extra_dejson.get("tenantId")
         client_id = connection.login
@@ -147,6 +128,7 @@ class FabricHook(BaseHook):
         if not api_access_token or not api_refresh_token:
             raise AirflowException("Failed to obtain access or refresh token from API.")
 
+        self.log.info("Successfully obtained new access token.")
         update_conn(self.conn_id, api_refresh_token)
 
         self.cached_access_token = {
@@ -162,6 +144,7 @@ class FabricHook(BaseHook):
 
         :return: dict: Headers with the authorization token.
         """
+        self.log.debug("Getting authorization headers.")
         return {
             "Authorization": f"Bearer {self._get_token()}",
         }
@@ -172,19 +155,11 @@ class FabricHook(BaseHook):
 
         :param location: The location of the item instance.
         """
-
-        def wait_retry(retry_state):
-            exception = retry_state.outcome.exception()
-            if isinstance(exception, HTTPError) and exception.response.status_code == 429:
-                retry_after = exception.response.headers.get('Retry-After')
-                if retry_after is not None:
-                    return int(retry_after)
-            # Use exponential backoff by default
-            return wait_exponential(multiplier=1, min=self.api_retry_delay, max=10)(retry_state)
+        self.log.info("Getting item run details for location: %s", location)
 
         @retry(
             stop=stop_after_attempt(self.max_api_retries),
-            wait=wait_retry
+            wait=self._wait_retry
         )
         def _internal_get_item_run_details():
             headers = self.get_headers()
@@ -194,6 +169,7 @@ class FabricHook(BaseHook):
             item_run_details = response.json()
             item_failure_reason = item_run_details.get("failureReason", dict())
             if item_failure_reason is not None and item_failure_reason.get("errorCode") in ["RequestExecutionFailed", "NotFound"]:
+                self.log.error("Item run failed with error code: %s", item_failure_reason.get("errorCode"))
                 raise FabricRunItemException("Unable to get item run details.")
             return item_run_details
 
@@ -208,12 +184,14 @@ class FabricHook(BaseHook):
 
         :return: The details of the item.
         """
+        self.log.info("Getting item details for workspace ID: %s, item ID: %s", workspace_id, item_id)
         url = f"{self._base_url}/{self._api_version}/workspaces/{workspace_id}/items/{item_id}"
 
         headers = self.get_headers()
         response = self._send_request("GET", url, headers=headers)
 
         if response.ok:
+            self.log.debug("Successfully retrieved item details for item ID: %s", item_id)
             return response.json()
 
         raise AirflowException(f"Failed to get item details for item {item_id} in workspace {workspace_id}.")
@@ -230,6 +208,7 @@ class FabricHook(BaseHook):
 
         :return: The run Id of item.
         """
+        self.log.info("Running fabric item in workspace ID: %s, item ID: %s, job type: %s", workspace_id, item_id, job_type)
         url = f"{self._base_url}/{self._api_version}/workspaces/{workspace_id}/items/{item_id}/jobs/instances?jobType={job_type}"
 
         headers = self.get_headers()
@@ -239,7 +218,7 @@ class FabricHook(BaseHook):
             data["executionData"] = {
                 "parameters": job_params or {},
                 "configuration": config or {},
-        }
+            }
 
         response = self._send_request("POST", url, headers=headers, json=data)
         response.raise_for_status()
@@ -248,9 +227,8 @@ class FabricHook(BaseHook):
         if location_header is None:
             raise AirflowException("Location header not found in run on demand item response.")
 
+        self.log.info("Successfully triggered fabric item run. Location header: %s", location_header)
         return location_header
-
-    # TODO: output value from notebook should be available in xcom - not available in API yet
 
     def wait_for_item_run_status(
         self,
@@ -269,13 +247,16 @@ class FabricHook(BaseHook):
 
         :return: True if the item run reached the target status, False otherwise.
         """
+        self.log.info("Waiting for item run at location: %s to reach status: %s", location, target_status)
         start_time = time.monotonic()
         while time.monotonic() - start_time < timeout:
             item_run_details = self.get_item_run_details(location)
             item_run_status = item_run_details["status"]
+            self.log.debug("Current status of item run: %s", item_run_status)
             if item_run_status in FabricRunItemStatus.TERMINAL_STATUSES:
+                self.log.info("Item run reached terminal status: %s", item_run_status)
                 return item_run_status == target_status
-            self.log.info("Sleeping for %s. The pipeline state is %s.", check_interval, item_run_status)
+            self.log.info("Sleeping for %s seconds. Current pipeline state: %s", check_interval, item_run_status)
             time.sleep(check_interval)
         raise FabricRunItemException(
             f"Item run did not reach the target status {target_status} within the {timeout} seconds."
@@ -291,6 +272,7 @@ class FabricHook(BaseHook):
         :return: The response object returned by the request.
         :raises requests.HTTPError: If the request fails (e.g., non-2xx status code).
         """
+        self.log.debug("Sending %s request to URL: %s", request_type, url)
         request_funcs: dict[str, Callable[..., requests.Response]] = {
             "GET": requests.get,
             "POST": requests.post,
@@ -299,8 +281,19 @@ class FabricHook(BaseHook):
         func: Callable[..., requests.Response] = request_funcs[request_type.upper()]
 
         response = func(url=url, **kwargs)
+        self.log.debug("Received response with status code: %s", response.status_code)
 
         return response
+
+    def _wait_retry(self, retry_state):
+        exception = retry_state.outcome.exception()
+        if isinstance(exception, HTTPError) and exception.response.status_code == 429:
+            retry_after = exception.response.headers.get('Retry-After')
+            if retry_after is not None:
+                self.log.info("Retry-After header received, waiting for %s seconds", retry_after)
+                return int(retry_after)
+        # Use exponential backoff by default
+        return wait_exponential(multiplier=1, min=self.api_retry_delay, max=10)(retry_state)
 
 
 class FabricAsyncHook(FabricHook):
