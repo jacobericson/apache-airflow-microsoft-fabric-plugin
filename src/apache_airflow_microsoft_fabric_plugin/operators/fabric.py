@@ -124,17 +124,37 @@ class FabricRunItemOperator(BaseOperator):
         return FabricHook(fabric_conn_id=self.fabric_conn_id, max_api_retries=self.max_api_retries, api_retry_delay=self.api_retry_delay)
 
     def execute(self, context: Context) -> None:
-        # Execute the item run
-        self.location = self.hook.run_fabric_item(
-            workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params, config=self.config
-        )
-        item_run_details = self.hook.get_item_run_details(self.location)
+        # Check if there's a previous failed run
+        location = context["ti"].xcom_pull(task_ids=self.task_id, key="location")
+        reuse_run_id = False
 
-        if item_run_details:
-            self.item_run_status = item_run_details.get("status")  # Use .get to avoid potential KeyErrors
-            self.item_run_id = item_run_details.get("id")
+        if location:
+            previous_run = self.hook.get_item_run_details(location)
+            previous_run_status = previous_run.get("status")
+            previous_run_id = previous_run.get("id")
+            if previous_run_status == FabricRunItemStatus.IN_PROGRESS:
+                self.log.info("Previous run %s is still in progress. Monitoring its status.", previous_run_id)
+                reuse_run_id = True
+            elif previous_run_status == FabricRunItemStatus.COMPLETED:
+                self.log.info("Previous run %s has already completed successfully.", previous_run_id)
+                context["ti"].xcom_push(key="run_status", value=FabricRunItemStatus.COMPLETED)
+                return
+            elif previous_run_status in FabricRunItemStatus.FAILURE_STATES:
+                self.log.info("Previous run %s has failed. Initiating a new run.", previous_run_id)
+
+        # Execute the item run
+        if reuse_run_id:
+            self.location = location
+            self.item_run_id = previous_run_id
+            self.item_run_status = previous_run_status
         else:
-            raise FabricRunItemException("Failed to retrieve item run details.")
+            self.location = self.hook.run_fabric_item(
+                workspace_id=self.workspace_id, item_id=self.item_id, job_type=self.job_type, job_params=self.job_params
+            )
+            item_run_details = self.hook.get_item_run_details(self.location)
+
+            self.item_run_status = item_run_details.get("status")
+            self.item_run_id = item_run_details.get("id")
 
         # Push the run id to XCom regardless of what happen during execution
         context["ti"].xcom_push(key="run_id", value=self.item_run_id)
