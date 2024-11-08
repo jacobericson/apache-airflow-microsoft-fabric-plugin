@@ -82,7 +82,6 @@ class FabricHook(BaseHook):
 
         :return: The access token.
         """
-        self.log.info("Retrieving OAuth token for connection ID: %s", self.conn_id)
 
         access_token = self.cached_access_token.get("access_token")
         expiry_time = self.cached_access_token.get("expiry_time")
@@ -91,7 +90,6 @@ class FabricHook(BaseHook):
             self.log.debug("Using cached access token.")
             return str(access_token)
 
-        self.log.info("Access token expired or not found. Requesting new token.")
         connection = self.get_connection(self.conn_id)
         tenant_id = connection.extra_dejson.get("tenantId")
         client_id = connection.login
@@ -128,7 +126,6 @@ class FabricHook(BaseHook):
         if not api_access_token or not api_refresh_token:
             raise AirflowException("Failed to obtain access or refresh token from API.")
 
-        self.log.info("Successfully obtained new access token.")
         update_conn(self.conn_id, api_refresh_token)
 
         self.cached_access_token = {

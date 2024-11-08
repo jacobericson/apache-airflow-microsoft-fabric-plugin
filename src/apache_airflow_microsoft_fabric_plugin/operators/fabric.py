@@ -124,8 +124,12 @@ class FabricRunItemOperator(BaseOperator):
         return FabricHook(fabric_conn_id=self.fabric_conn_id, max_api_retries=self.max_api_retries, api_retry_delay=self.api_retry_delay)
 
     def execute(self, context: Context) -> None:
-        # Check if there's a previous failed run
-        location = context["ti"].xcom_pull(task_ids=self.task_id, key="location")
+        # Check if there's a previous failed run# Check if there's a previous failed run using `previous_ti`
+        previous_ti = context['ti'].get_previous_ti()  # Retrieve previous task instance
+        previous_run_id = None
+
+        if previous_ti is not None:
+            location = previous_ti.xcom_pull(key='location', task_ids=self.task_id)
         reuse_run_id = False
 
         if location:
