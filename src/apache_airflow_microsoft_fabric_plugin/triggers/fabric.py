@@ -51,6 +51,7 @@ class FabricTrigger(BaseTrigger):
     async def run(self) -> AsyncIterator[TriggerEvent]:
         """Make async connection to the fabric and polls for the item run status."""
         hook = FabricAsyncHook(fabric_conn_id=self.fabric_conn_id)
+        item_run_status = None
 
         try:
             while self.end_time > time.monotonic():
@@ -88,10 +89,15 @@ class FabricTrigger(BaseTrigger):
                 )
                 await asyncio.sleep(self.check_interval)
             # Timeout reached
+            if item_run_status is not None:
+                message = f"Timeout reached: The item run {self.item_run_id} has {item_run_status}."
+            else:
+                message = f"Timeout reached: The item run {self.item_run_id} status is unknown."
+
             yield TriggerEvent(
                 {
                     "status": "error",
-                    "message": f"Timeout reached: The item run {self.item_run_id} has {item_run_status}.",
+                    "message": message,
                     "run_id": self.item_run_id,
                     "item_run_status": item_run_status,
                 }
