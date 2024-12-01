@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable
 
 import aiohttp
+import httpx
 import requests
 from asgiref.sync import sync_to_async
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
@@ -410,13 +411,37 @@ class FabricAsyncHook(FabricHook):
         """
         Get run details of the item instance.
 
-        :param location: The location of the item instance.
+        :param workspace_id: The workspace ID.
+        :param item_id: The item ID.
+        :param item_run_id: The item run ID.
         """
         url = f"{self._base_url}/{self._api_version}/workspaces/{workspace_id}/items/{item_id}/jobs/instances/{item_run_id}"
-        headers = await self.async_get_headers()
-        response = await self._async_send_request("GET", url, headers=headers)
 
-        return response
+        def wait_retry(retry_state):
+            exception = retry_state.outcome.exception()
+            if isinstance(exception, httpx.HTTPStatusError) and exception.response.status_code == 429:
+                retry_after = exception.response.headers.get('Retry-After')
+                if retry_after is not None:
+                    return int(retry_after)
+            # Use exponential backoff by default
+            return wait_exponential(multiplier=1, min=self.api_retry_delay, max=10)(retry_state)
+
+        @retry(
+            stop=stop_after_attempt(self.max_api_retries),
+            wait=wait_retry
+        )
+        async def _internal_get_item_run_details():
+            headers = await self.async_get_headers()
+            response = await self._async_send_request("GET", url, headers=headers)
+            response.raise_for_status()
+
+            item_run_details = response.json()
+            item_failure_reason = item_run_details.get("failureReason", dict())
+            if item_failure_reason is not None and item_failure_reason.get("errorCode") in ["RequestExecutionFailed", "NotFound"]:
+                raise FabricRunItemException("Unable to get item run details.")
+            return item_run_details
+
+        return await _internal_get_item_run_details()
 
     async def cancel_item_run(self, workspace_id: str, item_id: str, item_run_id: str):
         """
