@@ -156,7 +156,7 @@ class FabricRunItemOperator(BaseOperator):
                         f"Item run {self.item_run_id} has failed with status {self.item_run_status}."
                     )
             else:
-                end_time = time.monotonic() + self.timeout
+                end_time = time.time() + self.timeout
 
                 if self.item_run_status not in FabricRunItemStatus.TERMINAL_STATUSES:
                     self.log.info("Deferring the task to wait for item run to complete.")
