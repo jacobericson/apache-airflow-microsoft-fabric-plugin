@@ -202,7 +202,10 @@ class FabricRunItemOperator(BaseOperator):
         Relies on trigger to throw an exception, otherwise it assumes execution was successful.
         """
         if event:
-            self.log.info(event["message"])
-            context["ti"].xcom_push(key="run_status", value=event["item_run_status"])
+            self.log.info(event.get("message", "No message provided in event."))
+            if "item_run_status" in event:
+                context["ti"].xcom_push(key="run_status", value=event["item_run_status"])
+            else:
+                self.log.warning("No item run status provided in event.")
             if event["status"] == "error":
-                raise FabricRunItemException(str(event["message"]))
+                raise FabricRunItemException(str(event.get("message", "Unknown error occurred.")))
