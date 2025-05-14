@@ -7,6 +7,7 @@ import pytest
 import requests
 
 from airflow.models.connection import Connection
+from airflow.hooks.base import BaseHook
 from apache_airflow_microsoft_fabric_plugin.hooks.fabric import (
     FabricAsyncHook,
     FabricHook,
@@ -23,6 +24,25 @@ BASE_URL = "https://api.fabric.microsoft.com"
 API_VERSION = "v1"
 JOB_TYPE = "RunNotebook"
 MODULE = "apache_airflow_microsoft_fabric_plugin.hooks.fabric"
+
+
+@pytest.fixture
+def create_mock_connection(mocker):
+    """Fixture to create mock connections."""
+    connections = {}
+
+    def mock_get_connection(conn_id):
+        if conn_id in connections:
+            return connections[conn_id]
+        raise ValueError(f"Connection {conn_id} not found")
+
+    mocker.patch.object(BaseHook, "get_connection", side_effect=mock_get_connection)
+
+    def create_connection(connection):
+        connections[connection.conn_id] = connection
+        return connection
+
+    return create_connection
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +77,37 @@ def test_get_headers(get_token, fabric_hook):
     assert isinstance(headers, dict)
     assert "Authorization" in headers
     assert headers["Authorization"] == "Bearer access_token"
+
+@patch(f"{MODULE}.update_conn")
+@patch(f"{MODULE}.requests.post")
+def test_get_token_updates_connection(mock_post, mock_update_conn, fabric_hook, mocker):
+    # Set up mock connection
+    connection = MagicMock()
+    connection.login = "client_id"
+    connection.password = "old_refresh_token"
+    connection.extra_dejson = {"tenantId": "tenant_id"}
+    mocker.patch.object(fabric_hook, "get_connection", return_value=connection)
+
+    # Set up mock response
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "access_token": "new_access_token",
+        "refresh_token": "new_refresh_token",
+        "expires_in": 3600
+    }
+    mock_post.return_value = mock_response
+
+    # Reset cached token
+    fabric_hook.cached_access_token = {"access_token": None, "expiry_time": 0}
+
+    # Call _get_token
+    result = fabric_hook._get_token()
+
+    # Verify results
+    assert result == "new_access_token"
+    mock_update_conn.assert_called_once_with(
+        fabric_hook.conn_id, "new_refresh_token"
+    )
 
 
 def test_get_item_run_details_success(fabric_hook, get_token, mocker):
@@ -164,15 +215,34 @@ def test_send_request_with_custom_headers(mock_send_request, get_token, fabric_h
         request_type, url, headers={"Content-Type": "application/json", "Authorization": "Bearer access_token"}
     )
 
+def test_update_conn(mocker):
+    # Test updating connection
+    conn_id = "test_conn_id"
+    refresh_token = "new_refresh_token"
+
+    # Mock connection with save method
+    mock_connection = MagicMock()
+    mock_connection.save = MagicMock()
+
+    # Set up the mock to be returned by BaseHook.get_connection
+    mocker.patch.object(BaseHook, 'get_connection', return_value=mock_connection)
+
+    from apache_airflow_microsoft_fabric_plugin.hooks.fabric import update_conn
+    update_conn(conn_id, refresh_token)
+
+    # Verify connection was updated and saved
+    assert mock_connection.password == refresh_token
+    mock_connection.save.assert_called_once()
+
 @pytest.fixture
 def fabric_async_hook():
     client = FabricAsyncHook(fabric_conn_id=DEFAULT_FABRIC_CONNECTION)
     return client
 
 @pytest.mark.asyncio
-@mock.patch(f"{MODULE}.FabricAsyncHook._get_token", return_value="access_token")
+@mock.patch(f"{MODULE}.FabricAsyncHook._async_get_token", return_value="access_token")
 async def test_async_get_headers(mock_get_token, fabric_async_hook):
-    headers = await fabric_async_hook.get_headers()
+    headers = await fabric_async_hook.async_get_headers()
     assert isinstance(headers, dict)
     assert "Authorization" in headers
     assert headers["Authorization"] == "Bearer access_token"

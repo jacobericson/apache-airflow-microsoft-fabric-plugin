@@ -11,17 +11,21 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
 from airflow.models import Connection
-from airflow.utils.session import provide_session
 
 FABRIC_SCOPES = "https://api.fabric.microsoft.com/Item.Execute.All https://api.fabric.microsoft.com/Item.ReadWrite.All offline_access openid profile"
 
 
-@provide_session
-def update_conn(conn_id, refresh_token: str, session=None):
-    conn = session.query(Connection).filter(Connection.conn_id == conn_id).one()
-    conn.password = refresh_token
-    session.add(conn)
-    session.commit()
+def update_conn(conn_id, refresh_token: str):
+    """
+    Update a connection's refresh token using Airflow's APIs.
+    This approach works with any secret backend that Airflow supports.
+    
+    :param conn_id: The connection ID to update
+    :param refresh_token: The new refresh token to store
+    """
+    connection = BaseHook.get_connection(conn_id)
+    connection.password = refresh_token
+    connection.save()
 
 
 class FabricRunItemStatus:
