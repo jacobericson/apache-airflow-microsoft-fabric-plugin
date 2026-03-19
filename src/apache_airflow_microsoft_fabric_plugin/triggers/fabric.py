@@ -4,12 +4,26 @@ import asyncio
 import time
 from typing import AsyncIterator
 
+from airflow.exceptions import AirflowException
 from airflow.triggers.base import BaseTrigger, TriggerEvent
 from apache_airflow_microsoft_fabric_plugin.hooks.fabric import FabricAsyncHook, FabricRunItemStatus
 
 
 class FabricTrigger(BaseTrigger):
-    """Trigger when a Fabric item run finishes."""
+    """Trigger when a Fabric item run finishes.
+
+    :param fabric_conn_id: Airflow Connection ID for Fabric.
+    :param item_run_id: The ID of the running item.
+    :param workspace_id: The workspace ID.
+    :param item_id: The item ID.
+    :param job_type: The job type (e.g., RunNotebook, Pipeline).
+    :param end_time: The time at which to stop polling (monotonic clock).
+    :param check_interval: Seconds between status checks. Defaults to 60.
+    :param wait_for_termination: Whether to wait for the job to finish. Defaults to True.
+    :param max_api_retries: Maximum number of attempts for transient HTTP errors (1 = single attempt,
+        no retries). Defaults to 5.
+    :param api_retry_delay: Initial delay in seconds between retries. Defaults to 1.
+    """
 
     def __init__(
         self,
@@ -21,6 +35,8 @@ class FabricTrigger(BaseTrigger):
         end_time: float,
         check_interval: int = 60,
         wait_for_termination: bool = True,
+        max_api_retries: int = 5,
+        api_retry_delay: int = 1,
     ):
         super().__init__()
         self.fabric_conn_id = fabric_conn_id
@@ -31,6 +47,8 @@ class FabricTrigger(BaseTrigger):
         self.end_time = end_time
         self.check_interval = check_interval
         self.wait_for_termination = wait_for_termination
+        self.max_api_retries = max_api_retries
+        self.api_retry_delay = api_retry_delay
 
     def serialize(self):
         """Serialize the FabricTrigger instance."""
@@ -45,15 +63,21 @@ class FabricTrigger(BaseTrigger):
                 "end_time": self.end_time,
                 "check_interval": self.check_interval,
                 "wait_for_termination": self.wait_for_termination,
+                "max_api_retries": self.max_api_retries,
+                "api_retry_delay": self.api_retry_delay,
             },
         )
 
     async def run(self) -> AsyncIterator[TriggerEvent]:
         """Make async connection to the fabric and polls for the item run status."""
-        hook = FabricAsyncHook(fabric_conn_id=self.fabric_conn_id)
-        item_run_status = None
+        hook = FabricAsyncHook(
+            fabric_conn_id=self.fabric_conn_id,
+            max_api_retries=self.max_api_retries,
+            api_retry_delay=self.api_retry_delay,
+        )
 
         try:
+            item_run_status = None
             while self.end_time > time.time():
                 item_run_details = await hook.async_get_item_run_details(
                     item_run_id=self.item_run_id,
@@ -102,9 +126,9 @@ class FabricTrigger(BaseTrigger):
                     "item_run_status": item_run_status,
                 }
             )
-        except Exception as error:
+        except AirflowException as error:
             try:
-                self.log.info(
+                self.log.error(
                     "Unexpected error %s caught. Cancel pipeline run %s",
                     error,
                     self.item_run_id,

@@ -44,8 +44,8 @@ This operator composes the logic for this plugin. It triggers the Fabric item ru
 * `wait_for_termination`: (Default value: True) Wait until the run item.
 * `timeout`: int (Default value: 60 * 60 * 24 * 7). Time in seconds to wait for the pipeline or notebook. Used only if `wait_for_termination` is True.
 * `check_interval`: int (Default value: 60s). Time in seconds to wait before rechecking the refresh status.
-* `max_retries`: int (Default value: 5 retries). Max number of times to poll the API for a valid response after starting a job.
-* `retry_delay`: int (Default value: 1s). Polling retry delay.
+* `max_api_retries`: int (Default value: 5 retries). Max number of times to poll the API for a valid response after starting a job.
+* `api_retry_delay`: int (Default value: 1s). Polling retry delay.
 * `deferrable`: Boolean. Use the operator in deferrable mode.
 * `job_params`: Dict. Parameters to pass into the job.
 
