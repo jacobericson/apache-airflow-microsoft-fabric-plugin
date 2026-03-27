@@ -29,7 +29,6 @@ from apache_airflow_microsoft_fabric_plugin.hooks.fabric import (
     FabricRunItemStatus,
 )
 from apache_airflow_microsoft_fabric_plugin.triggers.fabric import FabricTrigger
-from airflow.utils.decorators import apply_defaults
 
 if TYPE_CHECKING:
     from airflow.models.taskinstancekey import TaskInstanceKey
@@ -73,7 +72,22 @@ class FabricRunItemLink(BaseOperatorLink):
 
 
 class FabricRunItemOperator(BaseOperator):
-    """Operator to run a Fabric item (e.g. a notebook) in a workspace."""
+    """
+    Operator to run a Fabric item (e.g. a notebook) in a workspace.
+
+    :param workspace_id: The workspace ID where the item is located.
+    :param item_id: The item ID to run.
+    :param fabric_conn_id: Airflow Connection ID for Fabric authentication.
+    :param job_type: The type of job to run (e.g., "RunNotebook").
+    :param wait_for_termination: Whether to wait for the job to finish. Defaults to True.
+    :param timeout: Maximum wait time in seconds. Defaults to 7 days.
+    :param check_interval: Seconds between status checks. Defaults to 60.
+    :param max_api_retries: Maximum number of attempts for transient HTTP errors (1 = single attempt,
+        no retries). Defaults to 5.
+    :param api_retry_delay: Initial delay in seconds between retries (exponential backoff). Defaults to 1.
+    :param deferrable: Whether to run in deferrable mode. Defaults to False.
+    :param job_params: Optional dictionary of parameters to pass to the job.
+    """
 
     template_fields: Sequence[str] = (
         "workspace_id",
@@ -100,8 +114,8 @@ class FabricRunItemOperator(BaseOperator):
         max_api_retries: int = 5,
         api_retry_delay: int = 1,
         deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
-        job_params: dict = None,
-        config: dict = None,
+        job_params: dict | None = None,
+        config: dict | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -130,11 +144,8 @@ class FabricRunItemOperator(BaseOperator):
         )
         item_run_details = self.hook.get_item_run_details(self.location)
 
-        if item_run_details:
-            self.item_run_status = item_run_details.get("status")  # Use .get to avoid potential KeyErrors
-            self.item_run_id = item_run_details.get("id")
-        else:
-            raise FabricRunItemException("Failed to retrieve item run details.")
+        self.item_run_status = item_run_details["status"]
+        self.item_run_id = item_run_details["id"]
 
         # Push the run id to XCom regardless of what happen during execution
         context["ti"].xcom_push(key="run_id", value=self.item_run_id)
@@ -171,6 +182,8 @@ class FabricRunItemOperator(BaseOperator):
                             job_type=self.job_type,
                             check_interval=self.check_interval,
                             end_time=end_time,
+                            max_api_retries=self.max_api_retries,
+                            api_retry_delay=self.api_retry_delay,
                         ),
                         method_name="execute_complete",
                     )
